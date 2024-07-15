@@ -112,7 +112,7 @@ const WS_PACKET_ACTIVE = 'active';
     }
 
     // Send packet
-    sendPacket(WS_PACKET_CHAT_MESSAGE, [author, message]);
+    sendPacket(WS_PACKET_CHAT_MESSAGE, { author, message });
   }
 
   /**
@@ -145,33 +145,38 @@ const WS_PACKET_ACTIVE = 'active';
     currentWsClient.addEventListener("message", onWsMessage);
     currentWsClient.addEventListener("error", onWsError);
     currentWsClient.addEventListener("close", onWsClose);
-    sendPacket(WS_PACKET_VIDEO_ID, getVideoId());
+    sendPacket(WS_PACKET_VIDEO_ID, { id: getVideoId() });
   }
 
   /**
    * Event handler for the WebSocket 'message' event.
    */
   function onWsMessage(event) {
-    const [ type, shouldBeActive ] = parsePacket(event.data);
+    const [ type, data ] = parsePacket(event.data);
     if (typeof type === "undefined") {
       return; // Connection has been closed by `parsePacket`
     }
     
-    // Close connection if the packet is not "active".
-    if (type !== WS_PACKET_ACTIVE || typeof shouldBeActive !== 'boolean') {
-      warn(`Received invalid packet of type ${type} (${typeof shouldBeActive})`);
+    // Skip the packet if type is not "active"
+    if (type !== WS_PACKET_ACTIVE) {
+      return;
+    }
+
+    // Close connection if the packet does not contain "shouldBeActive"
+    if (typeof data.shouldBeActive !== 'boolean') {
+      warn('Received invalid "active" packet');
       currentWsClient.close(...WS_SIGNAL_PROTOCOL_VIOLATED);
       return;
     }
 
     // Switch to active
-    if (shouldBeActive && !isActive) {
+    if (data.shouldBeActive && !isActive) {
       isActive = true;
       startReadingMessages();
     }
 
     // Switch to inactive
-    else if (!shouldBeActive && isActive) {
+    else if (!data.shouldBeActive && isActive) {
       isActive = false;
       stopReadingMessages();
     }
@@ -213,6 +218,10 @@ const WS_PACKET_ACTIVE = 'active';
 
     try {
       const data = JSON.parse(json);
+      if (typeof data !== "object") {
+        currentWsClient.close(...WS_SIGNAL_PACKET_INVALID);
+        return [];
+      }
       return [ type, data ]
     }
     catch (e) {
@@ -224,7 +233,7 @@ const WS_PACKET_ACTIVE = 'active';
   /**
    * Sends a packet via the current WebSocket client.
    * @param {string} type The packet type ('message', 'id')
-   * @param {any} data The data to send. Will be serialized to JSON.
+   * @param {object} data The data to send. Will be serialized to JSON.
    */
   function sendPacket(type, data) {
     const message = `${type} ${JSON.stringify(data)}`;
