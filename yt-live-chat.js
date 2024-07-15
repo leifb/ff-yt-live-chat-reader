@@ -37,6 +37,8 @@ const WS_PACKET_ACTIVE = 'active';
    * Only sends chat messages if this is true.
    */
   let isActive = false;
+  
+  let documentRoot = undefined;
 
   info("Starting 'YT live chat reader' addon...");
 
@@ -48,13 +50,33 @@ const WS_PACKET_ACTIVE = 'active';
   */
   setInterval(tryOpenConnection, 5000);
 
+  function setDocumentRoot() {
+    if (document.location.pathname === "/live_chat") {
+      documentRoot = document;
+      return;
+    }
+
+    if (document.location.pathname === "/watch") {
+      const iframe = document.getElementById("chatframe");
+      if (!iframe) {
+        return;
+      }
+      documentRoot = iframe.contentDocument;
+      return;
+    }
+
+    // Fallback to using the base document
+    documentRoot = document;
+  }
+
+
   /**
     * Searches for the live chat HTML node and adds a mutation observer.
     * @returns `true`, if setup worked and messages are being read.
     *          `false`, if setup failed.
     */
   function startReadingMessages() {
-    const base = document.querySelector("#items.yt-live-chat-item-list-renderer");
+    const base = getChatMessageNode()
     if (!base) {
       // This should not happen, as this addon is only active on the live chat URL
       warn("Could not find chat messages.");
@@ -66,6 +88,10 @@ const WS_PACKET_ACTIVE = 'active';
     });
 
     return true;
+  }
+
+  function getChatMessageNode() {
+    return documentRoot.querySelector("#items.yt-live-chat-item-list-renderer");
   }
 
   /**
@@ -125,8 +151,22 @@ const WS_PACKET_ACTIVE = 'active';
       return;
     }
 
+    // Update document root
+    // First, check if we run in a popout chat or not
+    setDocumentRoot();
+    if (!documentRoot) {
+      return;
+    }
+
     // Don't if we can't get a video id (there should always be one, but who knows)
     if (!getVideoId()) {
+      warn("Cannot find video id.");
+      return;
+    }
+
+    // Don't if we can't find chat message node (there should always be one, but who knows)
+    if (!getChatMessageNode()) {
+      warn("Cannot find chat message node.");
       return;
     }
 
