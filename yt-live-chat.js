@@ -40,6 +40,8 @@ const WS_PACKET_ACTIVE = 'active';
   
   let documentRoot = undefined;
 
+  let lastPath = document.location.pathname;
+
   info("Starting 'YT live chat reader' addon...");
 
   /*
@@ -50,12 +52,20 @@ const WS_PACKET_ACTIVE = 'active';
   */
   setInterval(tryOpenConnection, 5000);
 
+  // todo
+  registerNaviagtionEvent()
+
   function setDocumentRoot() {
+    // Clear possible old root (for example when switching the video)
+    documentRoot = undefined;
+
+    // Popout chat (the simplest case)
     if (document.location.pathname === "/live_chat") {
       documentRoot = document;
       return;
     }
 
+    // video view (only works if the video has some kind of live chat)
     if (document.location.pathname === "/watch") {
       const iframe = document.getElementById("chatframe");
       if (!iframe) {
@@ -64,9 +74,6 @@ const WS_PACKET_ACTIVE = 'active';
       documentRoot = iframe.contentDocument;
       return;
     }
-
-    // Fallback to using the base document
-    documentRoot = document;
   }
 
 
@@ -141,13 +148,17 @@ const WS_PACKET_ACTIVE = 'active';
     sendPacket(WS_PACKET_CHAT_MESSAGE, { author, message });
   }
 
+  function hasActiveConnection() {
+    return currentWsClient && currentWsClient.readyState !== WebSocket.CLOSED
+  }
+
   /**
    * Tries to open a connection to a server.
    * @returns 
    */
   function tryOpenConnection() {
     // Don't if there is an active connection
-    if (currentWsClient && currentWsClient.readyState !== WebSocket.CLOSED) {
+    if (hasActiveConnection()) {
       return;
     }
 
@@ -175,12 +186,19 @@ const WS_PACKET_ACTIVE = 'active';
     currentWsClient.addEventListener("open", onWsOpen, { once: true});
   }
 
+  function tryCloseConnection() {
+    if (!hasActiveConnection()) {
+      return;
+    }
+
+    currentWsClient.close();
+  }
+
   /**
    * Event handler for the WebSocket 'open' event.
    * Sends the "id" packet and adds event handlers for other events.
    */
   function onWsOpen() {
-    info("WebSocket connected to server!");
     isActive = false;
     currentWsClient.addEventListener("message", onWsMessage);
     currentWsClient.addEventListener("error", onWsError);
@@ -212,12 +230,14 @@ const WS_PACKET_ACTIVE = 'active';
     // Switch to active
     if (data.shouldBeActive && !isActive) {
       isActive = true;
+      info("Starting to send messages");
       startReadingMessages();
     }
 
     // Switch to inactive
     else if (!data.shouldBeActive && isActive) {
       isActive = false;
+      info("Stopping to send messages");
       stopReadingMessages();
     }
   }
@@ -234,7 +254,9 @@ const WS_PACKET_ACTIVE = 'active';
    */
   function onWsClose({ code, reason }) {
     stopReadingMessages();
-    info(`WebSocket closed. Code: ${code} Reason: ${reason || "<not given>"}`);
+    if (code !== 1000 && code !== 1005) {
+      info(`WebSocket closed. Code: ${code} Reason: ${reason || "<not given>"}`);
+    }
   }
 
   /**
@@ -285,6 +307,28 @@ const WS_PACKET_ACTIVE = 'active';
    */
   function getVideoId() {
     return new URLSearchParams(document.location.search).get("v");
+  }
+
+  function registerNaviagtionEvent() {
+    const observer = new MutationObserver(onNavigation);
+    let loadingIndicator = document.getElementsByTagName("yt-page-navigation-progress")[0];
+    if (!loadingIndicator) {
+      warn("Failed to find loading indicator, using body as backup");
+      loadingIndicator = document.body;      
+    }
+    
+    observer.observe(loadingIndicator, {
+      attributes: true
+    });
+  }
+
+  function onNavigation() {
+    if (lastPath === document.location.pathname) {
+      return;
+    }
+
+    lastPath = document.location.pathname;
+    tryCloseConnection();
   }
 
   /**
